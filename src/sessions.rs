@@ -1,5 +1,7 @@
 use crate::{message::Message, user::User};
-use std::collections::HashMap;
+use std::{collections::HashMap, fs::{self, File}, io::{BufRead, BufReader}};
+
+const USERS_STORAGE: &str = "users.csv";
 
 #[derive(Debug)]
 pub enum SessionError {
@@ -18,9 +20,28 @@ pub struct AnonymSession {
 
 impl AnonymSession {
     pub fn new() -> AnonymSession {
+        let mut users = HashMap::new();
+
+        if let Ok(file) = File::open(USERS_STORAGE) {
+            let reader = BufReader::new(file);
+
+            for line in reader.lines() {
+                if let Ok(line) = line {
+                    let mut line = line.split(";").into_iter();
+
+                    let login = line.next().expect("Users storage is invalid!");
+                    let password_hash = line.next().expect("Users storage is invalid!");
+
+                    users.insert(String::from(login), User::fill(
+                        String::from(login), 
+                        String::from(password_hash))
+                    );
+                }
+            }
+        }
+
         AnonymSession {
-            // TODO: реализовать считывание пользователей из файла
-            users: HashMap::new(),
+            users,
             valid_session: ValidSession {
                 messages: Vec::new(),
             },
@@ -74,7 +95,13 @@ impl AnonymSession {
 
 impl Drop for AnonymSession {
     fn drop(&mut self) {
-        // TODO: реализовать запись пользователей в файл
+        let mut contents = String::new();
+
+        for (_, user) in &self.users {
+            contents = format!("{}{}\n", contents, user.format());
+        }
+        
+        fs::write(USERS_STORAGE, contents).expect("Can't write to users storage!");
     }
 }
 

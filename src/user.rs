@@ -1,5 +1,5 @@
 pub struct User {
-    pub login: String,
+    login: String,
     password_hash: String,
 }
 
@@ -9,6 +9,17 @@ impl User {
             login,
             password_hash: User::hash(password),
         }
+    }
+
+    pub fn fill(login: String, password_hash: String) -> User {
+        User {
+            login,
+            password_hash,
+        }
+    }
+
+    pub fn format(&self) -> String {
+        format!("{};{}", self.login, self.password_hash)
     }
 
     pub fn auth(&self, password: String) -> bool {

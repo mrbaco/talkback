@@ -1,4 +1,3 @@
-
 mod sessions;
 mod user;
 mod message;
@@ -9,6 +8,8 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    use std::{fs::{self, File}, path::Path};
+
     use crate::sessions::{AnonymSession, SessionError};
 
     #[test]
@@ -58,13 +59,13 @@ mod tests {
             false
         });
 
-        assert!(if let Err(SessionError::EmptyPassword) = session.register(&login, "") {
+        assert!(if let Err(SessionError::EmptyPassword) = session.register("test_login", "") {
             true
         } else {
             false
         });
 
-        assert!(if let Err(SessionError::PasswordTooSmall) = session.register(&login, "test") {
+        assert!(if let Err(SessionError::PasswordTooSmall) = session.register("test_login", "test") {
             true
         } else {
             false
@@ -112,7 +113,30 @@ mod tests {
         });
     }
 
+    #[test]
+    fn users_storage() {
+        {
+            let mut session = AnonymSession::new();
+
+            session.register("test1", "password").expect("Can't register user!");
+            session.register("test2", "password").expect("Can't register user!");
+        }
+
+        {
+            let mut session = AnonymSession::new();
+
+            session.auth("test1", "password").expect("Can't find registered user!");
+            session.auth("test2", "password").expect("Can't find registered user!");
+        }
+
+        File::open("users.csv").expect("Users storage wasn't created!");
+    }
+
     fn data() -> (String, String, String, String) {
+        if Path::new("users.csv").exists() {
+            fs::remove_file("users.csv").unwrap();
+        }
+
         (
             String::from("login"),
             String::from("password"),
