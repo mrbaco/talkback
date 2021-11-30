@@ -1,9 +1,31 @@
+use std::{io::stdin, time::Duration, thread};
+
+use server::{Server, Responser};
+
+mod server;
 mod sessions;
 mod user;
 mod message;
 
 fn main() {
-    println!("Hello, world!");
+    let server = Server::new("0.0.0.0:80", 2);
+
+    server.add_handler("GET", "/hello.html", Box::new(|_, _| {
+        println!("hello endpoint");
+        Responser::file("HTTP/1.1 200 OK", "htdocs/hello.html")
+    }));
+
+    server.add_handler("GET", "/highload.html", Box::new(|_, _|{
+        println!("highload endpoint");
+        thread::sleep(Duration::from_secs(10));
+        Responser::content("HTTP/1.1 200 OK", "DONE!")
+    }));
+    
+    println!("Press Enter to shutdown...");
+
+    let mut input = String::new();
+
+    stdin().read_line(&mut input).unwrap();
 }
 
 #[cfg(test)]
@@ -11,6 +33,7 @@ mod tests {
     use std::{fs::{self, File}, path::Path};
 
     use crate::sessions::{AnonymSession, SessionError};
+    use crate::server;
 
     #[test]
     fn new_session_with_user_and_message() {
@@ -143,5 +166,10 @@ mod tests {
             String::from("This is test message #1."),
             String::from("This is test message #2."),
         )
+    }
+
+    #[test]
+    fn start_server() {
+        server::Server::new("0.0.0.0:80", 10);
     }
 }
