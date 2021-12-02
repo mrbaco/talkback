@@ -1,6 +1,8 @@
-use std::{io::stdin, time::Duration, thread};
+use std::{io::stdin, sync::{Mutex, Arc}, collections::HashMap};
 
-use server::{Server, Responser};
+use server::Server;
+
+use crate::{sessions::AnonymSession, server::Responser};
 
 mod server;
 mod sessions;
@@ -8,23 +10,112 @@ mod user;
 mod message;
 
 fn main() {
+    let session = Arc::new(Mutex::new(AnonymSession::new()));
+
     let server = Server::new("0.0.0.0:80", 5);
 
-    server.add_handler("GET", "/hello.html", Box::new(|_, _| {
-        println!("hello endpoint");
-        Responser::file("HTTP/1.1 200 OK", "htdocs/hello.html")
+    // Главная страница (авторизация и регистрация)
+    server.add_handler("GET", "/", Box::new(|_, _| {
+        println!("get homepage");
+        Responser::file("HTTP/1.1 200 OK", "htdocs/index.html")
     }));
 
-    server.add_handler("GET", "/highload.html", Box::new(|_, _|{
-        println!("highload endpoint");
-        thread::sleep(Duration::from_secs(10));
-        Responser::content("HTTP/1.1 200 OK", "DONE!")
+    // Страница с чатом
+    server.add_handler("GET", "/talkback.html", Box::new(|_, _| {
+        println!("get talkback");
+        Responser::file("HTTP/1.1 200 OK", "htdocs/talkback.html")
+    }));
+
+    // API
+    // Регистрация
+    let session_copy_1 = Arc::clone(&session);
+    server.add_handler("POST", "/api/register", Box::new(move |_, body| {
+        println!("post api/register");
+
+        let mut session = session_copy_1.lock().unwrap();
+        let mut params = HashMap::new();
+
+        for pair in body.split("&") {
+            let pair: Vec<&str> = pair.split("=").collect();
+            params.insert(*pair.get(0).unwrap(), *pair.get(1).unwrap());
+        }
+
+        session.register(
+            params.get("login").unwrap(),
+            params.get("password").unwrap()
+        ).unwrap();
+
+        Responser::content("HTTP/1.1 200 OK", "register endpoint")
+    }));
+
+    // Авторизация
+    let session_copy_2 = Arc::clone(&session);
+    server.add_handler("POST", "/api/auth", Box::new(move |_, body| {
+        let mut session = session_copy_2.lock().unwrap();
+        let mut params = HashMap::new();
+
+        for pair in body.split("&") {
+            let pair: Vec<&str> = pair.split("=").collect();
+            params.insert(*pair.get(0).unwrap(), *pair.get(1).unwrap());
+        }
+
+        session.auth(
+            params.get("login").unwrap(),
+            params.get("password").unwrap()
+        ).unwrap();
+
+        Responser::content("HTTP/1.1 200 OK", "auth endpoint")
+    }));
+
+    // Получение списка сообщений
+    let session_copy_3 = Arc::clone(&session);
+    server.add_handler("GET", "/api/messages", Box::new(move |_, body| {
+        let mut session = session_copy_3.lock().unwrap();
+        let mut params = HashMap::new();
+
+        for pair in body.split("&") {
+            let pair: Vec<&str> = pair.split("=").collect();
+            params.insert(*pair.get(0).unwrap(), *pair.get(1).unwrap());
+        }
+
+        let valid_session = session.auth(
+            params.get("login").unwrap(),
+            params.get("password").unwrap()
+        ).unwrap();
+
+        valid_session.get_messages(params.get("offset").unwrap().parse::<usize>().unwrap());
+
+        Responser::content("HTTP/1.1 200 OK", "messages endpoint")
+    }));
+
+    // Отправка сообщения
+    let session_copy_4 = Arc::clone(&session);
+    server.add_handler("PUT", "/api/message", Box::new(move |_, body| {
+        let mut session = session_copy_4.lock().unwrap();
+        let mut params = HashMap::new();
+
+        for pair in body.split("&") {
+            let pair: Vec<&str> = pair.split("=").collect();
+            params.insert(*pair.get(0).unwrap(), *pair.get(1).unwrap());
+        }
+
+        let valid_session = session.auth(
+            params.get("login").unwrap(),
+            params.get("password").unwrap()
+        ).unwrap();
+
+        valid_session.add_message(
+            params.get("login").unwrap(),
+            params.get("message").unwrap()
+        );
+
+        Responser::content("HTTP/1.1 200 OK", "message endpoint")
     }));
     
     println!("Press Enter to shutdown...");
-
-    let mut input = String::new();
-    stdin().read_line(&mut input).unwrap();
+    stdin()
+        .read_line(&mut String::new())
+        .unwrap();
 }
 
 #[cfg(test)]
