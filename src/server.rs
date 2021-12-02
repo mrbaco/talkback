@@ -85,13 +85,17 @@ impl Server {
                                     Some(line) => {
                                         let line: Vec<&str> = line.split(" ").collect();
 
-                                        (
-                                            *line.get(0).unwrap(),
-                                            *line.get(1).unwrap(),
-                                        )
+                                        let method = *line.get(0).unwrap();
+                                        let path = *line.get(1).unwrap()
+                                            .split("?").collect::<Vec<&str>>().get(0).unwrap();
+
+                                        (method, path)
                                     },
                                     None => ("", ""),
                                 };
+
+                                println!("{}", buffer);
+                                println!("{}, {}", request_line.0, request_line.1);
 
                                 let body = match request.get(1) {
                                     Some(body) => body,

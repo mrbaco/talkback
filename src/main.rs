@@ -8,7 +8,7 @@ mod user;
 mod message;
 
 fn main() {
-    let server = Server::new("0.0.0.0:80", 2);
+    let server = Server::new("0.0.0.0:80", 5);
 
     server.add_handler("GET", "/hello.html", Box::new(|_, _| {
         println!("hello endpoint");
@@ -24,16 +24,13 @@ fn main() {
     println!("Press Enter to shutdown...");
 
     let mut input = String::new();
-
     stdin().read_line(&mut input).unwrap();
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{fs::{self, File}, path::Path};
-
-    use crate::sessions::{AnonymSession, SessionError};
-    use crate::server;
+    use std::{fs::{self, File}, path::Path, time::Duration, net::TcpStream, io::{Write, Read}, thread};
+    use crate::{sessions::{AnonymSession, SessionError}, server::{Responser, Server}};
 
     #[test]
     fn new_session_with_user_and_message() {
@@ -170,6 +167,74 @@ mod tests {
 
     #[test]
     fn start_server() {
-        server::Server::new("0.0.0.0:80", 10);
+        let server = Server::new("0.0.0.0:80", 2);
+
+        server.add_handler("GET", "/hello.html", Box::new(|_, _| {
+            println!("hello endpoint");
+            Responser::file("HTTP/1.1 200 OK", "htdocs/hello.html")
+        }));
+    
+        server.add_handler("GET", "/highload.html", Box::new(|_, _|{
+            println!("highload endpoint");
+            thread::sleep(Duration::from_secs(10));
+            Responser::content("HTTP/1.1 200 OK", "DONE!")
+        }));
+        
+        thread::sleep(Duration::from_secs(5));
+
+        if let Ok(mut stream) = TcpStream::connect("localhost:80") {
+            // hello endpoint
+            stream.write_all(b"GET /hello.html HTTP/1.1").unwrap();
+
+            stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+
+            let mut buffer = [0; 1024];
+            stream.read(&mut buffer).unwrap();
+
+            assert_ne!(std::str::from_utf8(&buffer).unwrap().find("Welcome"), None);
+
+        }
+
+        if let Ok(mut stream) = TcpStream::connect("localhost:80") {
+            // 404 endpoint
+            stream.write_all(b"GET /asdasd.html HTTP/1.1").unwrap();
+
+            stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+
+            let mut buffer = [0; 1024];
+            stream.read(&mut buffer).unwrap();
+
+            assert_ne!(std::str::from_utf8(&buffer).unwrap().find("Not Found"), None);
+        }
+
+        for _ in 0..2 {
+            thread::spawn(|| {
+                thread::sleep(Duration::from_secs(1));
+
+                if let Ok(mut stream) = TcpStream::connect("localhost:80") {
+                    stream.write_all(b"GET /highload.html HTTP/1.1").unwrap();
+
+                    stream.set_read_timeout(Some(Duration::from_secs(15))).unwrap();
+
+                    let mut buffer = [0; 1024];
+                    stream.read(&mut buffer).unwrap();
+
+                    assert_ne!(std::str::from_utf8(&buffer).unwrap().find("DONE"), None);
+                }
+            });
+        }
+
+        thread::sleep(Duration::from_secs(4));
+
+        if let Ok(mut stream) = TcpStream::connect("localhost:80") {
+            stream.write_all(b"GET /highload.html HTTP/1.1").unwrap();
+
+            stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+
+            let mut buffer = [0; 1024];
+            stream.read(&mut buffer).unwrap();
+
+            assert_ne!(std::str::from_utf8(&buffer).unwrap().find("Service Unavailable"), None);
+        }
     }
 }
