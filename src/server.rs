@@ -1,16 +1,12 @@
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::{Read, Write, self};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
 use std::{thread, fs};
-use std::str;
+use std::str::{self, Utf8Error};
 
-type Job = Box<dyn Fn(Vec<&str>, &str) -> String + Sync + Send + 'static>;
-
-pub struct Server {
-    controller_tx: Sender<Impulse>,
-}
+type Job = Box<dyn Fn(Vec<String>, String) -> (String, String) + Sync + Send>;
 
 enum Impulse {
     Handler(String, String, Job),
@@ -18,33 +14,34 @@ enum Impulse {
     Shutdown,
 }
 
+pub struct Server {
+    controller_tx: Sender<Impulse>,
+}
+
 impl Server {
     pub fn new(addr: &str, max_threads_number: usize) -> Server {
         let listener = TcpListener::bind(addr).unwrap();
-
-        let (controller_tx1, controller_rx) = mpsc::channel();
-        let controller_tx2 = controller_tx1.clone();
-
+        let (controller_tx, controller_rx) = mpsc::channel();
+        
         // Main server thread
+        let controller_tx_copy = controller_tx.clone();
+
         thread::spawn(move || {
-            println!("main server thread is started");
+            println!("i: main server thread is started");
 
             for stream in listener.incoming() {
-                println!("new connection");
-
-                if let Err(error) = controller_tx1.send(Impulse::Request(stream.unwrap())) {
-                    println!("main server thread is stopped: {}", &error);
-
+                if let Err(error) = controller_tx.send(Impulse::Request(stream.unwrap())) {
+                    println!("e: main server thread is stopped: {}", &error);
                     break;
                 }
             }
             
-            println!("main server thread is stopped");
+            println!("i: main server thread is stopped");
         });
 
         // Controller thread
         thread::spawn(move || {
-            println!("controller thread is started");
+            println!("i: controller thread is started");
 
             let mut handlers: Arc<HashMap<String, Job>> = Arc::new(HashMap::new());
 
@@ -52,10 +49,16 @@ impl Server {
                 let impulse = controller_rx.recv().unwrap();
 
                 if let Impulse::Request(mut stream) = impulse {
+                    println!("i: got Request impulse");
+
                     if Arc::strong_count(&handlers) > max_threads_number {
-                        stream.write(Responser::file(
+                        println!("i: max threads number was achieved");
+
+                        Response::from_text_file(
+                            &mut stream,
                             "HTTP/1.1 503 Service Unavailable",
-                            "htdocs/503.html").as_bytes()).unwrap();
+                            "htdocs/503.html"
+                        ).unwrap();
 
                         continue;
                     }
@@ -63,65 +66,44 @@ impl Server {
                     let handlers = Arc::clone(&handlers);
 
                     thread::spawn(move || {
-                        let mut buffer = [0; 1024];
-                        stream.read(&mut buffer).unwrap();
+                        match Request::new(&mut stream) {
+                            Ok(request) => {
+                                println!("i: connect {} {}", request.method, request.path);
 
-                        match str::from_utf8(&buffer) {
-                            Ok(buffer) => {
-                                let buffer = buffer
-                                    .replace("\r\n", "\n");
-
-                                let request: Vec<&str> = buffer
-                                    .split("\n\n").collect();
-
-                                let headers = match request.get(0) {
-                                    Some(headers) => headers
-                                        .split("\n")
-                                        .collect(),
-                                    None => Vec::new(),
-                                };
-
-                                let request_line = match headers.get(0) {
-                                    Some(line) => {
-                                        let line: Vec<&str> = line.split(" ").collect();
-
-                                        let method = *line.get(0).unwrap();
-                                        let path = *line.get(1).unwrap()
-                                            .split("?").collect::<Vec<&str>>().get(0).unwrap();
-
-                                        (method, path)
-                                    },
-                                    None => ("", ""),
-                                };
-
-                                println!("{}", buffer);
-                                println!("{}, {}", request_line.0, request_line.1);
-
-                                let body = match request.get(1) {
-                                    Some(body) => body,
-                                    None => "",
-                                };
-
-                                match handlers.get(&format!("{} {}", request_line.0, request_line.1)) {
+                                match handlers.get(&format!("{} {}", request.method, request.path)) {
                                     Some(closure) => {
-                                        stream.write(closure(headers, body).as_bytes()).unwrap();
+                                        let result = closure(request.headers, request.body);
+
+                                        Response::from_text_content(
+                                            &mut stream,
+                                            &result.0,
+                                            &result.1
+                                        ).unwrap();
                                     },
                                     None => {
-                                        stream.write(Responser::file(
+                                        println!("i: handler not found");
+
+                                        Response::from_text_file(
+                                            &mut stream,
                                             "HTTP/1.1 404 Not Found",
-                                            "htdocs/404.html").as_bytes()).unwrap();
+                                            "htdocs/404.html"
+                                        ).unwrap();
                                         
                                         return;
                                     },
-                                }
+                                };
                             },
                             Err(_) => {
-                                stream.write(Responser::file(
-                                    "HTTP/1.1 400 Bad Request",
-                                    "htdocs/400.html").as_bytes()).unwrap();
+                                println!("i: incorrect request");
 
+                                Response::from_text_file(
+                                    &mut stream,
+                                    "HTTP/1.1 400 Bad Request",
+                                    "htdocs/400.html"
+                                ).unwrap();
+                
                                 return;
-                            }
+                            },
                         };
                     });
 
@@ -129,6 +111,8 @@ impl Server {
                 }
 
                 if let Impulse::Handler(method, path, closure) = impulse {
+                    println!("i: got Handler impulse");
+                    
                     if let Some(handlers) = Arc::get_mut(&mut handlers) {
                         handlers.insert(format!("{} {}", method, path), closure);
                     }
@@ -137,15 +121,16 @@ impl Server {
                 }
 
                 if let Impulse::Shutdown = impulse {
+                    println!("i: got Shutdown impulse");
                     break;
                 }
             }
 
-            println!("controller thread is stopped");
+            println!("i: controller thread is stopped");
         });
 
         Server {
-            controller_tx: controller_tx2
+            controller_tx: controller_tx_copy
         }
     }
 
@@ -166,26 +151,66 @@ impl Drop for Server {
     }
 }
 
-pub struct Responser;
+struct Request {
+    method: String,
+    path: String,
+    headers: Vec<String>,
+    body: String,
+}
 
-impl Responser {
-    pub fn file(status_line: &str, file_name: &str) -> String {
-        let content = fs::read_to_string(file_name).unwrap();
+impl Request {
+    fn new(stream: &mut TcpStream) -> Result<Request, Utf8Error> {
+        let mut buffer = [0; 1024];
+        stream.read(&mut buffer).unwrap();
 
-        format!(
-            "{}\r\nContent-length: {}\r\n\r\n{}",
-            status_line,
-            content.len(),
-            content
+        let buffer = str::from_utf8(&buffer)?
+            .replace("\r\n", "\n");
+
+        let request = buffer.split("\n\n").map(String::from).collect::<Vec<String>>();
+
+        let mut headers = match request.get(0) {
+            Some(headers) => headers.split("\n").map(String::from).collect::<Vec<String>>(),
+            None => Vec::new(),
+        };
+
+        let request_line = headers.remove(0);
+        let request_line: Vec<String> = request_line.split(" ").map(String::from).collect();
+
+        let method = request_line.get(0).unwrap().to_string();
+        let path = request_line.get(1).unwrap().to_string();
+
+        let body = match request.get(1) {
+            Some(body) => body.to_string(),
+            None => String::new(),
+        };
+
+        Ok(
+            Request {
+                method,
+                path,
+                headers,
+                body,
+            }
         )
     }
+}
 
-    pub fn content(status_line: &str, content: &str) -> String {
-        format!(
+struct Response;
+
+impl Response {
+    fn from_text_file(stream: &mut TcpStream, status_line: &str, file_name: &str) -> io::Result<usize> {
+        let content = fs::read_to_string(file_name).unwrap();
+        
+        stream.write(format!(
             "{}\r\nContent-length: {}\r\n\r\n{}",
-            status_line,
-            content.len(),
-            content
-        )
+            status_line, content.len(), content
+        ).as_bytes())
+    }
+
+    fn from_text_content(stream: &mut TcpStream, status_line: &str, content: &str) -> io::Result<usize> {
+        stream.write(format!(
+            "{}\r\nContent-length: {}\r\n\r\n{}",
+            status_line, content.len(), content
+        ).as_bytes())
     }
 }

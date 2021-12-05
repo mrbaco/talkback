@@ -1,8 +1,8 @@
-use std::{io::stdin, sync::{Mutex, Arc}, collections::HashMap};
+use std::{io::stdin, sync::{Mutex, Arc}, collections::HashMap, fs};
 
 use server::Server;
 
-use crate::{sessions::AnonymSession, server::Responser};
+use crate::sessions::AnonymSession;
 
 mod server;
 mod sessions;
@@ -17,13 +17,21 @@ fn main() {
     // Главная страница (авторизация и регистрация)
     server.add_handler("GET", "/", Box::new(|_, _| {
         println!("get homepage");
-        Responser::file("HTTP/1.1 200 OK", "htdocs/index.html")
+
+        (
+            String::from("HTTP/1.1 200 OK"),
+            fs::read_to_string("htdocs/index.html").unwrap(),
+        )
     }));
 
     // Страница с чатом
     server.add_handler("GET", "/talkback.html", Box::new(|_, _| {
         println!("get talkback");
-        Responser::file("HTTP/1.1 200 OK", "htdocs/talkback.html")
+
+        (
+            String::from("HTTP/1.1 200 OK"),
+            fs::read_to_string("htdocs/talkback.html").unwrap(),
+        )
     }));
 
     // API
@@ -45,7 +53,10 @@ fn main() {
             params.get("password").unwrap()
         ).unwrap();
 
-        Responser::content("HTTP/1.1 200 OK", "register endpoint")
+        (
+            String::from("HTTP/1.1 200 OK"),
+            String::from("register endpoint"),
+        )
     }));
 
     // Авторизация
@@ -64,7 +75,10 @@ fn main() {
             params.get("password").unwrap()
         ).unwrap();
 
-        Responser::content("HTTP/1.1 200 OK", "auth endpoint")
+        (
+            String::from("HTTP/1.1 200 OK"),
+            String::from("auth endpoint"),
+        )
     }));
 
     // Получение списка сообщений
@@ -85,7 +99,10 @@ fn main() {
 
         valid_session.get_messages(params.get("offset").unwrap().parse::<usize>().unwrap());
 
-        Responser::content("HTTP/1.1 200 OK", "messages endpoint")
+        (
+            String::from("HTTP/1.1 200 OK"),
+            String::from("messages endpoint"),
+        )
     }));
 
     // Отправка сообщения
@@ -109,7 +126,10 @@ fn main() {
             params.get("message").unwrap()
         );
 
-        Responser::content("HTTP/1.1 200 OK", "message endpoint")
+        (
+            String::from("HTTP/1.1 200 OK"),
+            String::from("message endpoint"),
+        )
     }));
     
     println!("Press Enter to shutdown...");
@@ -121,7 +141,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use std::{fs::{self, File}, path::Path, time::Duration, net::TcpStream, io::{Write, Read}, thread};
-    use crate::{sessions::{AnonymSession, SessionError}, server::{Responser, Server}};
+    use crate::{sessions::{AnonymSession, SessionError}, server::Server};
 
     #[test]
     fn new_session_with_user_and_message() {
@@ -262,13 +282,21 @@ mod tests {
 
         server.add_handler("GET", "/hello.html", Box::new(|_, _| {
             println!("hello endpoint");
-            Responser::file("HTTP/1.1 200 OK", "htdocs/hello.html")
+
+            (
+                String::from("HTTP/1.1 200 OK"),
+                fs::read_to_string("htdocs/hello.html").unwrap(),
+            )
         }));
     
         server.add_handler("GET", "/highload.html", Box::new(|_, _|{
             println!("highload endpoint");
             thread::sleep(Duration::from_secs(10));
-            Responser::content("HTTP/1.1 200 OK", "DONE!")
+            
+            (
+                String::from("HTTP/1.1 200 OK"),
+                String::from("DONE!"),
+            )
         }));
         
         thread::sleep(Duration::from_secs(5));
