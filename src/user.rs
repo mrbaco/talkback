@@ -7,7 +7,7 @@ impl User {
     pub fn new(login: String, password: String) -> User {
         User {
             login,
-            password_hash: User::hash(password),
+            password_hash: User::hash(&password),
         }
     }
 
@@ -23,10 +23,10 @@ impl User {
     }
 
     pub fn auth(&self, password: String) -> bool {
-        self.password_hash == User::hash(password)
+        self.password_hash == User::hash(&password)
     }
 
-    fn hash(string: String) -> String {
-        format!("{:x}", md5::compute(string))
+    fn hash(string: &String) -> String {
+        format!("{:x}", md5::compute(string.as_bytes()))
     }
 }

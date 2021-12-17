@@ -1,8 +1,14 @@
-use std::{io::stdin, sync::{Mutex, Arc}, collections::HashMap, fs};
+use std::io::stdin;
+use std::sync::{Mutex, Arc};
+use std::collections::HashMap;
+use std::fs;
+use std::str;
 
 use server::Server;
 
+use crate::server::RequestError;
 use crate::sessions::AnonymSession;
+use crate::sessions::SessionError;
 
 mod server;
 mod sessions;
@@ -14,124 +20,268 @@ fn main() {
 
     let server = Server::new("0.0.0.0:80", 5);
 
-    // Главная страница (авторизация и регистрация)
-    server.add_handler("GET", "/", Box::new(|_, _| {
-        println!("get homepage");
+    // Страница обработки ошибки 404
+    server.add_error_handler(RequestError::NotFound, Box::new(|_, _, _| {
+        let mut headers = Vec::new();
+        let body = fs::read_to_string("htdocs/404.html").unwrap();
+
+        headers.push(String::from("HTTP/1.1 404 Not Found"));
+        headers.push(String::from("Content-type: text/html; charset=utf-8"));
+        headers.push(format!("Content-length: {}", body.len()));
 
         (
-            String::from("HTTP/1.1 200 OK"),
-            fs::read_to_string("htdocs/index.html").unwrap(),
+            headers,
+            body,
         )
     }));
 
-    // Страница с чатом
-    server.add_handler("GET", "/talkback.html", Box::new(|_, _| {
-        println!("get talkback");
+    // Страница обработки ошибки 400
+    server.add_error_handler(RequestError::BadRequest, Box::new(|_, _, _| {
+        let mut headers = Vec::new();
+        let body = fs::read_to_string("htdocs/400.html").unwrap();
+
+        headers.push(String::from("HTTP/1.1 400 Bad Request"));
+        headers.push(String::from("Content-type: text/html; charset=utf-8"));
+        headers.push(format!("Content-length: {}", body.len()));
 
         (
-            String::from("HTTP/1.1 200 OK"),
-            fs::read_to_string("htdocs/talkback.html").unwrap(),
+            headers,
+            body,
+        )
+    }));
+
+    // Страница обработки ошибки 503
+    server.add_error_handler(RequestError::ServiceUnavailable, Box::new(|_, _, _| {
+        let mut headers = Vec::new();
+        let body = fs::read_to_string("htdocs/503.html").unwrap();
+
+        headers.push(String::from("HTTP/1.1 503 Service Unavailable"));
+        headers.push(String::from("Content-type: text/html; charset=utf-8"));
+        headers.push(format!("Content-length: {}", body.len()));
+
+        (
+            headers,
+            body,
+        )
+    }));
+
+    // Главная страница
+    server.add_handler("GET", "/", Box::new(|_, _, _| {
+        println!("get homepage");
+
+        let mut headers = Vec::new();
+        let body = fs::read_to_string("htdocs/index.html").unwrap();
+
+        headers.push(String::from("HTTP/1.1 200 OK"));
+        headers.push(String::from("Content-type: text/html; charset=utf-8"));
+        headers.push(format!("Content-length: {}", body.len()));
+
+        (
+            headers,
+            body,
         )
     }));
 
     // API
     // Регистрация
     let session_copy_1 = Arc::clone(&session);
-    server.add_handler("POST", "/api/register", Box::new(move |_, body| {
+    server.add_handler("POST", "/api/register", Box::new(move |_, _, request_body| {
         println!("post api/register");
 
+        let mut headers = Vec::new();
+        let body: String;
+
         let mut session = session_copy_1.lock().unwrap();
-        let mut params = HashMap::new();
 
-        for pair in body.split("&") {
-            let pair: Vec<&str> = pair.split("=").collect();
-            params.insert(*pair.get(0).unwrap(), *pair.get(1).unwrap());
+        let params = request_body.split("&").map(|e| {
+            let e = e.split("=").collect::<Vec<&str>>();
+
+            if e.len() == 2 {
+                (e.get(0).unwrap().to_string(), e.get(1).unwrap().to_string())
+            } else {
+                (String::new(), String::new())
+            }
+        }).collect::<HashMap<String, String>>();
+
+        match session.register(
+            params.get("login").or(Some(&String::new())).unwrap(),
+            params.get("password").or(Some(&String::new())).unwrap()
+        ) {
+            Ok(_) => {
+                headers.push(String::from("HTTP/1.1 201 Created"));                
+                body = format!("{{\"result\":\"{}\"}}", "ok");
+                println!("i: user {} was registered", params.get("login").unwrap());
+            },
+            Err(e) => {
+                headers.push(String::from("HTTP/1.1 400 Bad Request"));
+
+                let error = match e {
+                    SessionError::EmptyLogin => String::from("empty login"),
+                    SessionError::LoginExists => String::from("login exists"),
+                    SessionError::EmptyPassword => String::from("empty password"),
+                    SessionError::PasswordTooSmall => String::from("password too small"),
+                    _ => String::from("unknown error"),
+                };
+
+                body = format!("{{\"result\":\"{}\"}}", error);
+            },
         }
 
-        session.register(
-            params.get("login").unwrap(),
-            params.get("password").unwrap()
-        ).unwrap();
+        headers.push(String::from("Content-type: application/json; charset=utf-8"));
+        headers.push(format!("Content-length: {}", body.len()));
 
         (
-            String::from("HTTP/1.1 200 OK"),
-            String::from("register endpoint"),
+            headers,
+            body,
         )
     }));
 
-    // Авторизация
+    // Аутентификация
     let session_copy_2 = Arc::clone(&session);
-    server.add_handler("POST", "/api/auth", Box::new(move |_, body| {
+    server.add_handler("POST", "/api/auth", Box::new(move |_, _, request_body| {
+        println!("post api/auth");
+
+        let mut headers = Vec::new();
+        let body: String;
+
         let mut session = session_copy_2.lock().unwrap();
-        let mut params = HashMap::new();
+        
+        let params = request_body.split("&").map(|e| {
+            let e = e.split("=").collect::<Vec<&str>>();
 
-        for pair in body.split("&") {
-            let pair: Vec<&str> = pair.split("=").collect();
-            params.insert(*pair.get(0).unwrap(), *pair.get(1).unwrap());
+            if e.len() == 2 {
+                (e.get(0).unwrap().to_string(), e.get(1).unwrap().to_string())
+            } else {
+                (String::new(), String::new())
+            }
+        }).collect::<HashMap<String, String>>();
+
+        match session.auth(
+            params.get("login").or(Some(&String::new())).unwrap(),
+            params.get("password").or(Some(&String::new())).unwrap()
+        ) {
+            Ok(_) => {
+                headers.push(String::from("HTTP/1.1 200 Ok"));                
+                body = format!("{{\"result\":\"{}\"}}", "ok");
+                println!("i: user {} was authed", params.get("login").unwrap());
+            },
+            Err(e) => {
+                headers.push(String::from("HTTP/1.1 400 Bad Request"));
+
+                let error = match e {
+                    SessionError::EmptyLogin => String::from("empty login"),
+                    SessionError::EmptyPassword => String::from("empty password"),
+                    SessionError::LoginNotFound => String::from("login not found"),
+                    SessionError::AuthFailed => String::from("auth failed"),
+                    _ => String::from("unknown error"),
+                };
+
+                body = format!("{{\"result\":\"{}\"}}", error);
+            },
         }
 
-        session.auth(
-            params.get("login").unwrap(),
-            params.get("password").unwrap()
-        ).unwrap();
+        headers.push(String::from("Content-type: application/json; charset=utf-8"));
+        headers.push(format!("Content-length: {}", body.len()));
 
         (
-            String::from("HTTP/1.1 200 OK"),
-            String::from("auth endpoint"),
+            headers,
+            body,
         )
     }));
 
-    // Получение списка сообщений
+    // Получение списка сообщений (только через авторизацию)
     let session_copy_3 = Arc::clone(&session);
-    server.add_handler("GET", "/api/messages", Box::new(move |_, body| {
+    server.add_handler("GET", "/api/messages", Box::new(move |params, _, _| {
+        println!("get api/messages");
+
+        let mut headers = Vec::new();
+        let body: String;
+
         let mut session = session_copy_3.lock().unwrap();
-        let mut params = HashMap::new();
 
-        for pair in body.split("&") {
-            let pair: Vec<&str> = pair.split("=").collect();
-            params.insert(*pair.get(0).unwrap(), *pair.get(1).unwrap());
-        }
+        match session.auth(
+            params.get("login").or(Some(&String::new())).unwrap(),
+            params.get("password").or(Some(&String::new())).unwrap()
+        ) {
+            Ok(valid_session) => {
+                let messages = valid_session.get_messages(0).iter()
+                    .map(|message| message.format())
+                    .collect::<Vec<String>>().join("<br />");
 
-        let valid_session = session.auth(
-            params.get("login").unwrap(),
-            params.get("password").unwrap()
-        ).unwrap();
+                headers.push(String::from("HTTP/1.1 200 Ok"));  
+                body = format!("{{\"result\":\"{}\"}}", messages);
 
-        valid_session.get_messages(params.get("offset").unwrap().parse::<usize>().unwrap());
+                println!("i: user {} requested messages", params.get("login").unwrap());
+            },
+            Err(_) => {
+                headers.push(String::from("HTTP/1.1 401 Unauthorized"));
+                body = format!("{{\"result\":\"{}\"}}", "auth failed");
+            }
+        };
+
+        headers.push(String::from("Content-type: application/json; charset=utf-8"));
+        headers.push(format!("Content-length: {}", body.len()));
 
         (
-            String::from("HTTP/1.1 200 OK"),
-            String::from("messages endpoint"),
+            headers,
+            body,
         )
     }));
 
-    // Отправка сообщения
+    // Отправка сообщения (только через авторизацию)
     let session_copy_4 = Arc::clone(&session);
-    server.add_handler("PUT", "/api/message", Box::new(move |_, body| {
+    server.add_handler("POST", "/api/message", Box::new(move |_, _, request_body| {
+        println!("post api/message");
+
+        let mut headers = Vec::new();
+        let body: String;
+
         let mut session = session_copy_4.lock().unwrap();
-        let mut params = HashMap::new();
+        
+        let params = request_body.split("&").map(|e| {
+            let e = e.split("=").collect::<Vec<&str>>();
 
-        for pair in body.split("&") {
-            let pair: Vec<&str> = pair.split("=").collect();
-            params.insert(*pair.get(0).unwrap(), *pair.get(1).unwrap());
-        }
+            if e.len() == 2 {
+                (e.get(0).unwrap().to_string(), e.get(1).unwrap().to_string())
+            } else {
+                (String::new(), String::new())
+            }
+        }).collect::<HashMap<String, String>>();
 
-        let valid_session = session.auth(
-            params.get("login").unwrap(),
-            params.get("password").unwrap()
-        ).unwrap();
+        match session.auth(
+            params.get("login").or(Some(&String::new())).unwrap(),
+            params.get("password").or(Some(&String::new())).unwrap()
+        ) {
+            Ok(valid_session) => {
+                valid_session.add_message(
+                    params.get("login").unwrap(),
+                    params.get("message").unwrap()
+                );
 
-        valid_session.add_message(
-            params.get("login").unwrap(),
-            params.get("message").unwrap()
-        );
+                headers.push(String::from("HTTP/1.1 201 Created"));  
+                body = format!("{{\"result\":\"{}\"}}", "ok");
+
+                println!("i: user {} sent a message: {}",
+                    params.get("login").unwrap(),
+                    params.get("message").unwrap()
+                );
+            },
+            Err(err) => {
+                headers.push(String::from("HTTP/1.1 401 Unauthorized"));
+                body = format!("{{\"result\":\"{:?}\"}}", err);
+            }
+        };
+
+        headers.push(String::from("Content-type: application/json; charset=utf-8"));
+        headers.push(format!("Content-length: {}", body.len()));
 
         (
-            String::from("HTTP/1.1 200 OK"),
-            String::from("message endpoint"),
+            headers,
+            body,
         )
     }));
     
+    println!("Rust TalkBack Server");
     println!("Press Enter to shutdown...");
     stdin()
         .read_line(&mut String::new())
@@ -141,7 +291,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use std::{fs::{self, File}, path::Path, time::Duration, net::TcpStream, io::{Write, Read}, thread};
-    use crate::{sessions::{AnonymSession, SessionError}, server::Server};
+    use crate::{sessions::{AnonymSession, SessionError}, server::{Server, RequestError}};
 
     #[test]
     fn new_session_with_user_and_message() {
@@ -280,22 +430,78 @@ mod tests {
     fn start_server() {
         let server = Server::new("0.0.0.0:80", 2);
 
-        server.add_handler("GET", "/hello.html", Box::new(|_, _| {
-            println!("hello endpoint");
+        server.add_error_handler(RequestError::NotFound, Box::new(|_, _, _| {
+            let mut headers = Vec::new();
+            let content = fs::read_to_string("htdocs/404.html").unwrap();
+
+            headers.push(String::from("HTTP/1.1 404 Not Found"));
+            headers.push(String::from("Content-type: text/html; charset=utf-8"));
+            headers.push(format!("Content-length: {}", content.len()));
 
             (
-                String::from("HTTP/1.1 200 OK"),
-                fs::read_to_string("htdocs/hello.html").unwrap(),
+                headers,
+                content,
+            )
+        }));
+
+        server.add_error_handler(RequestError::BadRequest, Box::new(|_, _, _| {
+            let mut headers = Vec::new();
+            let content = fs::read_to_string("htdocs/400.html").unwrap();
+
+            headers.push(String::from("HTTP/1.1 400 Bad Request"));
+            headers.push(String::from("Content-type: text/html; charset=utf-8"));
+            headers.push(format!("Content-length: {}", content.len()));
+
+            (
+                headers,
+                content,
+            )
+        }));
+
+        server.add_error_handler(RequestError::ServiceUnavailable, Box::new(|_, _, _| {
+            let mut headers = Vec::new();
+            let content = fs::read_to_string("htdocs/503.html").unwrap();
+
+            headers.push(String::from("HTTP/1.1 503 Service Unavailable"));
+            headers.push(String::from("Content-type: text/html; charset=utf-8"));
+            headers.push(format!("Content-length: {}", content.len()));
+
+            (
+                headers,
+                content,
+            )
+        }));
+
+        server.add_handler("GET", "/hello.html", Box::new(|_, _, _| {
+            println!("hello endpoint");
+
+            let mut headers = Vec::new();
+            let content = fs::read_to_string("htdocs/hello.html").unwrap();
+
+            headers.push(String::from("HTTP/1.1 200 OK"));
+            headers.push(String::from("Content-type: text/html; charset=utf-8"));
+            headers.push(format!("Content-length: {}", content.len()));
+
+            (
+                headers,
+                content,
             )
         }));
     
-        server.add_handler("GET", "/highload.html", Box::new(|_, _|{
+        server.add_handler("GET", "/highload.html", Box::new(|_, _, _| {
             println!("highload endpoint");
             thread::sleep(Duration::from_secs(10));
             
+            let mut headers = Vec::new();
+            let content = String::from("DONE!");
+
+            headers.push(String::from("HTTP/1.1 200 OK"));
+            headers.push(String::from("Content-type: text/html; charset=utf-8"));
+            headers.push(format!("Content-length: {}", content.len()));
+
             (
-                String::from("HTTP/1.1 200 OK"),
-                String::from("DONE!"),
+                headers,
+                content,
             )
         }));
         

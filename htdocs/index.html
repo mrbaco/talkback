@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<title>Rust Talkback</title>
+		<meta charset="UTF-8" />
+		<style>
+			body {
+				font: 16px "Times New Roman";
+			}
+			
+			#account {
+				margin: 0 auto;
+				width: 230px;
+			}
+			
+			#talkback {
+				margin: 0 auto;
+				display: none;
+				width: 560px;
+			}
+			
+			#talkback #messages {
+				border: 1px solid #ccc;
+				overflow: auto;
+				height: 300px;
+				width: 100%;
+			}
+			
+			input {
+				font: 18px "Courier New";
+				outline: none;
+				padding: 3px;
+				width: 220px;
+			}
+			
+			button {
+				padding: 6px;
+			}
+			
+			#account button {
+				float: right;
+			}
+			
+			#talkback input {
+				width: 360px;
+			}
+			
+			#warning {
+				font-size: 14px;
+				color: #cc0000;
+			}
+		</style>
+	</head>
+	<body>
+		<div id="account">
+			<h1>Rust Talkback</h1>
+			<h2>Sign In</h2>
+			<div id="warning"></div>
+			<p>
+				<label>
+					Login:<br />
+					<input type="text" id="login" />
+				</label>
+			</p>
+			<p>
+				<label>
+					Password:<br />
+					<input type="password" id="password" />
+				</label>
+			</p>
+			<button id="signin">Sign In</button>
+		</div>
+		<div id="talkback">
+			<h1>Rust Talkback</h1>
+			<h2>Welcome, <span id="username"></span>!</h2>
+			<div id="messages"></div>
+			<p>
+				<label>
+					Message:&nbsp;<input type="text" id="message" />&nbsp;<button id="send">Send</button>
+				</label>
+			</p>
+		</div>
+		<script type="text/javascript">
+			function talkback() {
+				document.getElementById("account").style.display = "none";
+				document.getElementById("talkback").style.display = "block";
+				document.getElementById("username").innerHTML = document.getElementById("login").value;
+				
+				setInterval(() => {
+					fetch("/api/messages?login=" + document.getElementById("login").value + "&password=" + document.getElementById("password").value, {
+						method: "GET"
+					})
+					.then(response => response.json())
+					.then(response => document.getElementById("messages").innerHTML = response.result);
+				}, 1000);
+			}
+			
+			document.getElementById("signin").onclick = function() {
+				fetch("/api/auth", {
+					method: "POST",
+					body: "login=" + document.getElementById("login").value + "&password=" + document.getElementById("password").value
+				})
+				.then(response => response.json())
+				.then(response => {
+					if (response.result == "login not found") {
+						fetch("/api/register", {
+							method: "POST",
+							body: "login=" + document.getElementById("login").value + "&password=" + document.getElementById("password").value
+						})
+						.then(response => response.json())
+						.then(response => {
+							if (response.result == "ok") {
+								talkback();
+							} else {
+								document.getElementById("warning").innerHTML = response.result;
+							}
+						});
+					} else if (response.result == "ok") {
+						talkback();
+					} else {
+						document.getElementById("warning").innerHTML = response.result;
+					}
+				});
+			};
+			
+			document.getElementById("send").onclick = function() {
+				if (document.getElementById("message").value == "") {
+					return;
+				}
+				
+				fetch("/api/message", {
+					method: "POST",
+					body: "login=" + document.getElementById("login").value + "&password=" + document.getElementById("password").value + "&message=" + document.getElementById("message").value
+				})
+				.then(response => response.json())
+				.then(response => {
+					document.getElementById("message").value = "";
+				});
+			};
+		</script>
+	</body>
+</html>

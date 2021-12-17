@@ -14,7 +14,7 @@ impl Message {
     }
 
     pub fn format(&self) -> String {
-        format!("{}: {}", self.login, self.text)
+        format!("<b>{}</b>: {}", self.login, self.text)
     }
 }
 
