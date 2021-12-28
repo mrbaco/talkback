@@ -18,9 +18,9 @@ mod message;
 fn main() {
     let session = Arc::new(Mutex::new(AnonymSession::new()));
 
-    let server = Server::new("0.0.0.0:80", 5);
+    let server = Server::new("0.0.0.0:8080", 5);
 
-    // Страница обработки ошибки 404
+    // 404 error handler
     server.add_error_handler(RequestError::NotFound, Box::new(|_, _, _| {
         let mut headers = Vec::new();
         let body = fs::read_to_string("htdocs/404.html").unwrap();
@@ -35,7 +35,7 @@ fn main() {
         )
     }));
 
-    // Страница обработки ошибки 400
+    // 400 error handler
     server.add_error_handler(RequestError::BadRequest, Box::new(|_, _, _| {
         let mut headers = Vec::new();
         let body = fs::read_to_string("htdocs/400.html").unwrap();
@@ -50,7 +50,7 @@ fn main() {
         )
     }));
 
-    // Страница обработки ошибки 503
+    // 503 error handler
     server.add_error_handler(RequestError::ServiceUnavailable, Box::new(|_, _, _| {
         let mut headers = Vec::new();
         let body = fs::read_to_string("htdocs/503.html").unwrap();
@@ -65,7 +65,7 @@ fn main() {
         )
     }));
 
-    // Главная страница
+    // Homepage handler
     server.add_handler("GET", "/", Box::new(|_, _, _| {
         println!("get homepage");
 
@@ -83,7 +83,7 @@ fn main() {
     }));
 
     // API
-    // Регистрация
+    // Sign up
     let session_copy_1 = Arc::clone(&session);
     server.add_handler("POST", "/api/register", Box::new(move |_, _, request_body| {
         println!("post api/register");
@@ -92,16 +92,7 @@ fn main() {
         let body: String;
 
         let mut session = session_copy_1.lock().unwrap();
-
-        let params = request_body.split("&").map(|e| {
-            let e = e.split("=").collect::<Vec<&str>>();
-
-            if e.len() == 2 {
-                (e.get(0).unwrap().to_string(), e.get(1).unwrap().to_string())
-            } else {
-                (String::new(), String::new())
-            }
-        }).collect::<HashMap<String, String>>();
+        let params = params_from_body(request_body);
 
         match session.register(
             params.get("login").or(Some(&String::new())).unwrap(),
@@ -110,17 +101,18 @@ fn main() {
             Ok(_) => {
                 headers.push(String::from("HTTP/1.1 201 Created"));                
                 body = format!("{{\"result\":\"{}\"}}", "ok");
+
                 println!("i: user {} was registered", params.get("login").unwrap());
             },
             Err(e) => {
                 headers.push(String::from("HTTP/1.1 400 Bad Request"));
 
                 let error = match e {
-                    SessionError::EmptyLogin => String::from("empty login"),
-                    SessionError::LoginExists => String::from("login exists"),
-                    SessionError::EmptyPassword => String::from("empty password"),
-                    SessionError::PasswordTooSmall => String::from("password too small"),
-                    _ => String::from("unknown error"),
+                    SessionError::EmptyLogin => String::from("Empty login!"),
+                    SessionError::LoginExists => String::from("Login exists!"),
+                    SessionError::EmptyPassword => String::from("Empty password!"),
+                    SessionError::PasswordTooSmall => String::from("Password too small!"),
+                    _ => String::from("Unknown error!"),
                 };
 
                 body = format!("{{\"result\":\"{}\"}}", error);
@@ -136,7 +128,7 @@ fn main() {
         )
     }));
 
-    // Аутентификация
+    // Sign in
     let session_copy_2 = Arc::clone(&session);
     server.add_handler("POST", "/api/auth", Box::new(move |_, _, request_body| {
         println!("post api/auth");
@@ -145,16 +137,7 @@ fn main() {
         let body: String;
 
         let mut session = session_copy_2.lock().unwrap();
-        
-        let params = request_body.split("&").map(|e| {
-            let e = e.split("=").collect::<Vec<&str>>();
-
-            if e.len() == 2 {
-                (e.get(0).unwrap().to_string(), e.get(1).unwrap().to_string())
-            } else {
-                (String::new(), String::new())
-            }
-        }).collect::<HashMap<String, String>>();
+        let params = params_from_body(request_body);
 
         match session.auth(
             params.get("login").or(Some(&String::new())).unwrap(),
@@ -163,17 +146,18 @@ fn main() {
             Ok(_) => {
                 headers.push(String::from("HTTP/1.1 200 Ok"));                
                 body = format!("{{\"result\":\"{}\"}}", "ok");
+
                 println!("i: user {} was authed", params.get("login").unwrap());
             },
             Err(e) => {
                 headers.push(String::from("HTTP/1.1 400 Bad Request"));
 
                 let error = match e {
-                    SessionError::EmptyLogin => String::from("empty login"),
-                    SessionError::EmptyPassword => String::from("empty password"),
-                    SessionError::LoginNotFound => String::from("login not found"),
-                    SessionError::AuthFailed => String::from("auth failed"),
-                    _ => String::from("unknown error"),
+                    SessionError::EmptyLogin => String::from("Empty login!"),
+                    SessionError::EmptyPassword => String::from("Empty password!"),
+                    SessionError::LoginNotFound => String::from("Login not found!"),
+                    SessionError::AuthFailed => String::from("Auth failed!"),
+                    _ => String::from("Unknown error!"),
                 };
 
                 body = format!("{{\"result\":\"{}\"}}", error);
@@ -189,7 +173,7 @@ fn main() {
         )
     }));
 
-    // Получение списка сообщений (только через авторизацию)
+    // Get messages list (sign in required)
     let session_copy_3 = Arc::clone(&session);
     server.add_handler("GET", "/api/messages", Box::new(move |params, _, _| {
         println!("get api/messages");
@@ -228,7 +212,7 @@ fn main() {
         )
     }));
 
-    // Отправка сообщения (только через авторизацию)
+    // Send message (sign in required)
     let session_copy_4 = Arc::clone(&session);
     server.add_handler("POST", "/api/message", Box::new(move |_, _, request_body| {
         println!("post api/message");
@@ -237,16 +221,7 @@ fn main() {
         let body: String;
 
         let mut session = session_copy_4.lock().unwrap();
-        
-        let params = request_body.split("&").map(|e| {
-            let e = e.split("=").collect::<Vec<&str>>();
-
-            if e.len() == 2 {
-                (e.get(0).unwrap().to_string(), e.get(1).unwrap().to_string())
-            } else {
-                (String::new(), String::new())
-            }
-        }).collect::<HashMap<String, String>>();
+        let params = params_from_body(request_body);
 
         match session.auth(
             params.get("login").or(Some(&String::new())).unwrap(),
@@ -286,6 +261,17 @@ fn main() {
     stdin()
         .read_line(&mut String::new())
         .unwrap();
+}
+
+fn params_from_body(body: &str) -> HashMap<String, String> {
+    body.split("&").map(|e| {
+        let e: Vec<&str> = e.split("=").collect();
+
+        (
+            e.get(0).or(Some(&"")).unwrap().to_string(),
+            e.get(1).or(Some(&"")).unwrap().to_string(),
+        )
+    }).collect()
 }
 
 #[cfg(test)]
