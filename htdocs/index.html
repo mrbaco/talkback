@@ -7,6 +7,11 @@
 			body {
 				font: 16px "Times New Roman";
 			}
+
+			#annotation {
+				padding-top: 20px;
+				clear: both;
+			}
 			
 			#account {
 				margin: 0 auto;
@@ -69,6 +74,9 @@
 				</label>
 			</p>
 			<button id="signin">Sign In</button>
+			<p id="annotation">
+				<small>Just enter what ever you want. The first time of your sign in will create your account and you can use it.</small>
+			</p>
 		</div>
 		<div id="talkback">
 			<h1>Rust Talkback</h1>
@@ -102,7 +110,7 @@
 				})
 				.then(response => response.json())
 				.then(response => {
-					if (response.result == "login not found") {
+					if (response.result == "Login not found!") {
 						fetch("/api/register", {
 							method: "POST",
 							body: "login=" + document.getElementById("login").value + "&password=" + document.getElementById("password").value

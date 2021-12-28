@@ -18,7 +18,7 @@ mod message;
 fn main() {
     let session = Arc::new(Mutex::new(AnonymSession::new()));
 
-    let server = Server::new("0.0.0.0:8080", 5);
+    let server = Server::new("0.0.0.0:80", 5);
 
     // 404 error handler
     server.add_error_handler(RequestError::NotFound, Box::new(|_, _, _| {
